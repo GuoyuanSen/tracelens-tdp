@@ -94,8 +94,8 @@ class EvidenceTests(unittest.TestCase):
         self.assertTrue(data['coverage']['partial'])
 
     def test_citations_are_stable_after_sorting_and_duplicates(self):
-        later=record('later',time=NOW-10)
-        earlier=record('earlier',time=NOW-80)
+        later=record('later',time=NOW-10,victim=TARGET)
+        earlier=record('earlier',time=NOW-80,victim=TARGET)
         data=analysis([later,earlier,earlier])
         self.assertEqual([(e['ref'],e['id']) for e in data['evidence']],[('E001','earlier'),('E002','later')])
         self.assertEqual(data['hypotheses'][0]['evidence'],['E001','E002'])
@@ -130,9 +130,8 @@ class EvidenceTests(unittest.TestCase):
 
     @patch('tracelens.ai.request_json', return_value={'choices':[{'message':{'content':'结论 [E999]'},'finish_reason':'stop'}]})
     def test_hallucinated_references_are_flagged(self,request):
-        result=generate({'ai_url':'https://model.example.com/v1','ai_model':'configured-model'},analysis())
-        self.assertFalse(result['verified'])
-        self.assertIn('E999',result['warnings'][0])
+        with self.assertRaises(AppError):
+            generate({'ai_url':'https://model.example.com/v1','ai_model':'configured-model'},analysis())
 
 
 class StorageTests(unittest.TestCase):
@@ -239,14 +238,13 @@ class HTTPTests(unittest.TestCase):
             self.assertEqual(error.exception.code,404)
 
 
-if __name__=='__main__':unittest.main()
 
 class DemoTests(unittest.TestCase):
     def test_demo_needs_no_credentials_or_network(self):
         from tracelens.demo import DemoClient
         client=DemoClient(NOW)
         with patch('tracelens.tdp.request_json', side_effect=AssertionError('Network must not be used')):
-            self.assertEqual(len(client.hosts(NOW-86400,NOW)['items']),3)
+            self.assertEqual(len(client.hosts(NOW-86400,NOW)['items']),4)
             data=analyze(TARGET,NOW-86400,NOW,client.logs(TARGET,NOW-86400,NOW))
             self.assertGreater(data['summary']['remote'],0)
             self.assertTrue(all(e['raw']['synthetic'] for e in data['evidence']))

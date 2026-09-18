@@ -13,6 +13,7 @@ from urllib.parse import urlsplit
 from . import __version__
 from .ai import evidence_packet, generate
 from .demo import DemoClient
+from .evidence import canonical_target, enrich, remediation_comparison
 from .investigation import analyze, compare, markdown_report
 from .storage import Storage
 from .tdp import AppError, TDPClient, time_range
@@ -29,6 +30,18 @@ class Application:
     def client(self):
         config = self.storage.config()
         return DemoClient(self.demo_anchor) if config.get('mode') == 'demo' else TDPClient(config)
+
+    def case_client(self, case, analysis):
+        if case['source'].startswith('demo:'):
+            if not analysis.get('demo_anchor'):
+                raise AppError('这份历史演练未保存案例时间锚点，可继续查看和导出；请新建演练后再复查或关联查询。')
+            return DemoClient(analysis['demo_anchor'])
+        if self.storage.config().get('mode') == 'demo':
+            raise AppError('此档案来自真实 TDP，请切换真实模式后继续调查。')
+        client = self.client()
+        if client.base != case['source']:
+            raise AppError('当前平台与该调查来源不同，请切回原平台。')
+        return client
 
     def get(self, path):
         if path == '/api/bootstrap':
@@ -64,10 +77,7 @@ class Application:
                 return client.security(start, end)
             if path == '/api/hosts':
                 return client.hosts(start, end, body.get('keyword', ''), body.get('page', 1), body.get('severity'))
-            try:
-                ip = str(ipaddress.ip_address(body.get('ip', '')))
-            except ValueError:
-                raise AppError('请输入合法的 IP 地址。') from None
+            ip, kind = canonical_target(body.get('ip', ''))
             analysis = analyze(ip, start, end, client.logs(ip, start, end))
             analysis['mode'] = getattr(client, 'mode', 'live')
             if analysis['mode'] == 'demo':
@@ -78,6 +88,32 @@ class Application:
             raise AppError('操作不存在。', 404)
         case_id, action = parts[2:]
         case = self.storage.get(case_id)
+        if action == 'pivot':
+            target, kind = canonical_target(body.get('target', ''))
+            origin = next((snap for snap in case['snapshots'] if snap['id'] == body.get('snapshot_id')), None)
+            if origin is None:
+                raise AppError('来源快照不存在。', 409)
+            relation = next((item for item in origin['analysis']['related_targets'] if item['target'] == target), None)
+            if relation is None:
+                raise AppError('此目标不是该快照中的关联对象。')
+            client = self.case_client(case, origin['analysis'])
+            start, end = origin['analysis']['time_from'], origin['analysis']['time_to']
+            analysis = analyze(target, start, end, client.logs(target, start, end))
+            analysis['mode'] = getattr(client, 'mode', 'live')
+            if analysis['mode'] == 'demo':
+                analysis['demo_anchor'] = client.anchor
+            return self.storage.create_linked(case_id, origin['id'], target, case['source'], analysis, relation['evidence'])
+        if action == 'remediation':
+            performed = body.get('performed_at')
+            if type(performed) is not int or not 0 < performed <= int(time.time()):
+                raise AppError('处置时间必须是已经发生的时间。')
+            record = {'id': uuid.uuid4().hex, 'performed_at': performed, 'recorded_at': int(time.time()), 'executed_by_tool': False}
+            for key in ('action', 'scope', 'verification'):
+                value = body.get(key)
+                if not isinstance(value, str) or not value.strip() or len(value) > 3000:
+                    raise AppError('请填写处置动作、对象范围及执行依据，每项不超过 3000 字。')
+                record[key] = value.strip()
+            return self.storage.mutate(case_id, lambda item: item['remediations'].append(record))
         if action == 'note':
             text = body.get('text', '')
             if not isinstance(text, str) or not text.strip() or len(text) > 5000:
@@ -95,26 +131,33 @@ class Application:
         if action == 'recheck':
             start, end = time_range(body.get('time_from'), body.get('time_to'))
             previous = case['snapshots'][-1]['analysis']
-            if start < previous['time_to']:
+            remediation = None
+            baseline = previous
+            if body.get('remediation_id'):
+                remediation = next((r for r in case['remediations'] if r['id'] == body['remediation_id']), None)
+                origin = next((s for s in case['snapshots'] if s['id'] == body.get('baseline_snapshot_id')), None)
+                if remediation is None or origin is None:
+                    raise AppError('处置记录或基准快照不存在。')
+                baseline = origin['analysis']
+                if start < remediation['performed_at']:
+                    raise AppError('复查窗口不能早于选定的处置时间。')
+            elif start < previous['time_to']:
                 raise AppError('复查应选择不早于上次查询结束时间的后续窗口。')
-            if case['source'].startswith('demo:'):
-                client = DemoClient(previous.get('demo_anchor', self.demo_anchor))
-            else:
-                if self.storage.config().get('mode') == 'demo':
-                    raise AppError('此档案来自真实 TDP，请切换真实模式后复查。')
-                client = self.client()
-            if client.base != case['source']:
-                raise AppError('当前 TDP 地址与该调查的数据来源不同，请切回原平台后复查。')
+            client = self.case_client(case, baseline)
             analysis = analyze(case['ip'], start, end, client.logs(case['ip'], start, end))
             analysis['mode'] = getattr(client, 'mode', 'live')
             if analysis['mode'] == 'demo':
                 analysis['demo_anchor'] = client.anchor
+            enrich(analysis, case['source'], int(time.time()))
+            comparison = remediation_comparison(baseline, analysis, remediation) if remediation else None
             expected = case['snapshots'][-1]['id']
             def append(item):
                 if item['snapshots'][-1]['id'] != expected:
                     raise AppError('调查已被其他请求更新，请刷新后再复查。', 409)
                 item['snapshots'].append({'id': uuid.uuid4().hex, 'created_at': int(time.time()), 'kind': 'recheck',
-                                          'analysis': analysis, 'comparison': compare(previous, analysis)})
+                                          'analysis': analysis, 'comparison': compare(baseline, analysis),
+                                          'remediation_comparison': comparison,
+                                          'baseline_snapshot_id': body.get('baseline_snapshot_id') if remediation else expected})
             return self.storage.mutate(case_id, append)
         if action == 'ai':
             if case['source'].startswith('demo:'):

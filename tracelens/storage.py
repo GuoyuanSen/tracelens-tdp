@@ -7,6 +7,7 @@ import threading
 import time
 import uuid
 from .tdp import AppError, validate_url
+from .evidence import enrich, enrich_case
 
 FIELDS = ('tdp_url', 'tdp_key', 'tdp_secret', 'ai_url', 'ai_key', 'ai_model', 'mode')
 SECRETS = ('tdp_key', 'tdp_secret', 'ai_key')
@@ -96,7 +97,7 @@ class Storage:
             row = db.execute('SELECT document FROM cases WHERE id=?', (case_id,)).fetchone()
         if not row:
             raise AppError('调查记录不存在。', 404)
-        return json.loads(row[0])
+        return enrich_case(json.loads(row[0]))
 
     def list(self):
         with self.connect() as db:
@@ -106,8 +107,9 @@ class Storage:
 
     def create(self, ip, source, analysis):
         now = int(time.time())
+        enrich(analysis, source, now)
         case = {'id': uuid.uuid4().hex, 'ip': ip, 'title': ip + ' 主机调查', 'status': 'investigating',
-                'source': source, 'created_at': now, 'updated_at': now, 'notes': [],
+                'source': source, 'created_at': now, 'updated_at': now, 'notes': [], 'links': [], 'remediations': [],
                 'snapshots': [{'id': uuid.uuid4().hex, 'created_at': now, 'kind': 'initial', 'analysis': analysis}]}
         with self.connect() as db:
             db.execute('INSERT INTO cases VALUES (?,?,?)', (case['id'], json.dumps(case, ensure_ascii=False), now))
@@ -119,9 +121,32 @@ class Storage:
             row = db.execute('SELECT document FROM cases WHERE id=?', (case_id,)).fetchone()
             if not row:
                 raise AppError('调查记录不存在。', 404)
-            case = json.loads(row[0])
+            case = enrich_case(json.loads(row[0]))
             change(case)
             case['updated_at'] = int(time.time())
             db.execute('UPDATE cases SET document=?, updated_at=? WHERE id=?',
                        (json.dumps(case, ensure_ascii=False), case['updated_at'], case_id))
             return case
+
+    def create_linked(self, parent_id, snapshot_id, target, source, analysis, evidence_refs):
+        with self.lock, self.connect() as db:
+            db.execute('BEGIN IMMEDIATE')
+            row = db.execute('SELECT document FROM cases WHERE id=?', (parent_id,)).fetchone()
+            if not row:
+                raise AppError('来源调查不存在。', 404)
+            parent = enrich_case(json.loads(row[0]))
+            now = int(time.time())
+            enrich(analysis, source, now)
+            child_id = uuid.uuid4().hex
+            link = {'case_id': parent_id, 'target': parent['ip'], 'snapshot_id': snapshot_id,
+                    'evidence': evidence_refs, 'direction': 'parent'}
+            child = {'id': child_id, 'ip': target, 'title': target + ' 关联调查', 'source': source,
+                     'status': 'investigating', 'created_at': now, 'updated_at': now,
+                     'notes': [], 'links': [link], 'remediations': [],
+                     'snapshots': [{'id': uuid.uuid4().hex, 'created_at': now, 'kind': 'initial', 'analysis': analysis}]}
+            parent['links'].append({'case_id': child_id, 'target': target, 'snapshot_id': snapshot_id,
+                                    'evidence': evidence_refs, 'direction': 'child'})
+            parent['updated_at'] = now
+            db.execute('INSERT INTO cases VALUES (?,?,?)', (child_id, json.dumps(child, ensure_ascii=False), now))
+            db.execute('UPDATE cases SET document=?,updated_at=? WHERE id=?', (json.dumps(parent, ensure_ascii=False), now, parent_id))
+            return child

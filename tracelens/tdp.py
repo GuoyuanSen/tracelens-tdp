@@ -130,13 +130,14 @@ class TDPClient:
 
     def logs(self, ip, start, end):
         time_range(start, end)
-        try:
-            ip = str(ipaddress.ip_address(ip))
-        except ValueError:
-            raise AppError('调查目标必须是合法的 IPv4 或 IPv6 地址。') from None
-        sql = "(machine = '{0}' OR net.src_ip = '{0}' OR net.dest_ip = '{0}' OR net.real_src_ip = '{0}')".format(ip)
+        from .evidence import canonical_target
+        ip, kind = canonical_target(ip)
+        if kind == 'ip':
+            sql = "(machine = '{0}' OR net.src_ip = '{0}' OR net.dest_ip = '{0}' OR net.real_src_ip = '{0}')".format(ip)
+        else:
+            sql = "(data = '{0}' OR threat.ioc = '{0}')".format(ip)
         fields = ['id', 'time', 'machine', 'direction', 'data', 'threat', 'net.src_ip', 'net.dest_ip',
-                  'net.real_src_ip', 'net.src_port', 'net.dest_port', 'net.type', 'assets', 'dest_assets', 'node_name']
+                  'net.real_src_ip', 'net.src_port', 'net.dest_port', 'net.type', 'assets', 'dest_assets', 'node_name', 'device_id', 'attacker', 'victim']
         data = self.call('logs', {'time_from': start, 'time_to': end, 'sql': sql,
                                'net_data_type': ['attack', 'risk', 'action'],
                                'columns': [{'label': field, 'value': field} for field in fields]})

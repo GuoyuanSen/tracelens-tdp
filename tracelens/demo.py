@@ -6,7 +6,8 @@ DEMO_SOURCE = 'demo://tracelens/training-v1'
 HOSTS = [
     {'ip': '192.0.2.10', 'name': '演练 · 财务终端', 'severity': 4},
     {'ip': '192.0.2.20', 'name': '演练 · 文件服务器', 'severity': 3},
-    {'ip': '192.0.2.30', 'name': '演练 · 运维终端', 'severity': 1},
+    {'ip': '192.0.2.30', 'name': '演练 · 授权运维终端', 'severity': 1},
+    {'ip': '192.0.2.40', 'name': '演练 · 证据不足主机', 'severity': 3},
 ]
 
 
@@ -34,17 +35,43 @@ class DemoClient:
             rows.append({'id': 'synthetic-' + identifier, 'time': self.anchor + offset, 'machine': machine,
                          'direction': direction, 'data': indicator, 'synthetic': True,
                          'threat': {'name': '[合成演练] ' + name, 'type': kind, 'result': result,
-                                    'severity': severity, 'is_connected': int(connected), 'ioc': indicator},
+                                    'severity': severity, 'is_connected': int(connected), 'ioc': indicator, 'suuid': 'synthetic-rule-' + kind},
                          'net': {'src_ip': src, 'dest_ip': dst, 'src_port': 48000, 'dest_port': 443, 'type': 'tcp'},
                          'assets': {'name': [names.get(src, '演练外部地址')], 'group_name': '合成演练环境'},
                          'dest_assets': {'name': [names.get(dst, '演练外部地址')], 'group_name': '合成演练环境'}})
+        for row in rows:
+            row['device_id'] = 'synthetic-sensor-01'
+            row['node_name'] = '演练节点'
+            if row['direction'] == 'lateral':
+                row['attacker'] = row['net']['src_ip']
+                row['victim'] = row['net']['dest_ip']
+        for index in range(12):
+            heartbeat = copy.deepcopy(rows[2])
+            heartbeat['id'] = 'synthetic-heartbeat-%02d' % index
+            heartbeat['time'] = self.anchor - 6200 + index * 30
+            rows.append(heartbeat)
+        operations = copy.deepcopy(rows[6])
+        operations['id'] = 'synthetic-approved-maintenance'
+        operations['time'] = self.anchor - 2600
+        operations['threat']['name'] = '[合成演练] 管理端口扫描尝试'
+        operations['training_context'] = {'approved_change': 'EXERCISE-CHANGE-001', 'purpose': '授权运维资产扫描',
+                                         'warning': '只适用于这个合成案例；仍需人工核对范围和时间，不自动排除其他告警。'}
+        rows.append(operations)
+        rows.append({'id': 'synthetic-incomplete', 'time': self.anchor - 1800, 'machine': '192.0.2.40',
+                     'synthetic': True, 'node_name': '演练采集缺口节点', 'direction': 'in',
+                     'threat': {'name': '[合成演练] 可疑访问，结果未知', 'type': 'exploit', 'result': 'unknown', 'severity': 3},
+                     'net': {'src_ip': '198.51.100.80', 'dest_ip': '192.0.2.40'}, 'data': 'unknown-demo.example.com'})
         return rows
 
     def logs(self, ip, start, end):
         time_range(start,end)
-        rows=[copy.deepcopy(row) for row in self.dataset() if start<=row['time']<=end and ip in
-              (row['machine'],row['net']['src_ip'],row['net']['dest_ip'])]
-        return {'data':rows,'total':len(rows)}
+        from .evidence import canonical_target, target_matches
+        from .investigation import normalized
+        target, kind = canonical_target(ip)
+        rows=[copy.deepcopy(row) for row in self.dataset() if start<=row['time']<=end and target_matches(normalized(row),target,kind)]
+        # Deliberately model an incomplete collector response in the uncertainty exercise.
+        total = len(rows) + 7 if target == '192.0.2.40' and rows else len(rows)
+        return {'data':rows,'total':total}
 
     def hosts(self,start,end,keyword='',page=1,severity=None):
         time_range(start,end)
