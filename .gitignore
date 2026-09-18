@@ -1,0 +1,31 @@
+# Credentials and local runtime data
+.env
+.env.*
+!.env.example
+config.json
+config.*.json
+*.local.json
+secrets*
+*.pem
+*.key
+*.p12
+*.pfx
+*.sqlite*
+*.db
+*.db-*
+data/
+private/
+exports/
+logs/
+*.log
+# Runtime and build products
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+build/
+dist/
+*.egg-info/
+.DS_Store
+.coverage
+htmlcov/

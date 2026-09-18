@@ -1,0 +1,20 @@
+[build-system]
+requires = ["setuptools>=61"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "tracelens-tdp"
+version = "0.1.0"
+description = "Evidence-led local investigation workbench for ThreatBook TDP"
+readme = "README.md"
+requires-python = ">=3.9"
+dependencies = []
+
+[project.scripts]
+tracelens-tdp = "tracelens.server:main"
+
+[tool.setuptools.packages.find]
+include = ["tracelens*"]
+
+[tool.setuptools.package-data]
+tracelens = ["static/*"]

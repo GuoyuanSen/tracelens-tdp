@@ -1,0 +1,16 @@
+<!doctype html>
+<html lang="zh-CN">
+<head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><meta name="color-scheme" content="light"><title>TraceLens for TDP · 威胁透镜</title><link rel="icon" href="/favicon.svg"><link rel="stylesheet" href="/style.css"><script type="module" src="/app.js"></script></head>
+<body>
+<div class="app-shell">
+<aside class="sidebar">
+<a class="brand" href="#overview"><span class="lens-logo"></span><span>TraceLens<small>FOR TDP</small></span></a>
+<div class="workspace-label">INVESTIGATION WORKSPACE</div>
+<nav aria-label="主导航"><a href="#overview" data-nav="overview"><span>◈</span>调查总览</a><a href="#cases" data-nav="cases"><span>▤</span>调查档案</a><a href="#settings" data-nav="settings"><span>⚙</span>连接设置</a></nav>
+<div class="sidebar-bottom"><div class="local-mark"><span class="dot"></span>本地调查工作台</div><p>只读查询 · 本地存档<br>独立配置数据源</p><div class="sidebar-version">v0.1.0 <span>非官方项目</span></div></div>
+</aside>
+<div class="workspace"><header class="topbar"><div class="breadcrumb">工作空间 <span>/</span> <strong id="page-label">调查总览</strong></div><div class="header-right"><span id="connection-badge" class="badge">未配置连接</span><span class="avatar">TL</span></div></header><main id="main" tabindex="-1"><div class="loading"><span class="spinner"></span>正在打开调查工作台…</div></main></div>
+</div>
+<div id="toast" role="status" class="toast" hidden></div>
+<dialog id="dialog"><div id="dialog-content"></div></dialog>
+</body></html>
